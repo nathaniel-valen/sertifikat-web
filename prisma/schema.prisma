@@ -1,0 +1,38 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Event {
+  id           Int           @id @default(autoincrement())
+  eventName    String
+  templateUrl  String
+  certPrefix   String        @default("CERT/2026")
+  isActive     Boolean       @default(true)
+  expiryDate   DateTime?
+  nameX        Float
+  nameY        Float
+  certX        Float
+  certY        Float
+  createdAt    DateTime      @default(now())
+  certificates Certificate[]
+}
+
+model Whitelist {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+  createdAt DateTime @default(now())
+}
+
+model Certificate {
+  id      Int      @id @default(autoincrement())
+  name    String
+  certNo  String?
+  event   Event    @relation(fields: [eventId], references: [id])
+  eventId Int
+  date    DateTime @default(now())
+}
