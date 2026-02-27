@@ -85,21 +85,38 @@ export async function POST(req: Request) {
     const firstPage = pdfDoc.getPages()[0];
     const { width, height } = firstPage.getSize();
 
+    const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const nameFontSize = 35;
+    const certFontSize = 14;
+
+    // Konversi % → koordinat PDF (X dari kiri, Y dari bawah)
     const pdfNameX = (event.nameX / 100) * width;
     const pdfNameY = height - ((event.nameY / 100) * height);
     const pdfCertX = (event.certX / 100) * width;
     const pdfCertY = height - ((event.certY / 100) * height);
 
-    const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    const nameFontSize = 35;
-
+    // ✅ Center nama (horizontal)
     const nameTextWidth = font.widthOfTextAtSize(name.trim(), nameFontSize);
     const finalNameX = pdfNameX - (nameTextWidth / 2);
 
+    // ✅ Center certNo (horizontal) — tambahkan ini
+    const certTextWidth = font.widthOfTextAtSize(finalCertNo, certFontSize);
+    const finalCertX = pdfCertX - (certTextWidth / 2);
+
     firstPage.drawText(name.trim(), {
-      x: finalNameX, y: pdfNameY,
-      size: nameFontSize, font,
+      x: finalNameX,
+      y: pdfNameY,
+      size: nameFontSize,
+      font,
       color: rgb(0, 0, 0),
+    });
+
+    firstPage.drawText(finalCertNo, {
+      x: finalCertX,  // ✅ sudah center
+      y: pdfCertY,
+      size: certFontSize,
+      font,
+      color: rgb(0.2, 0.2, 0.2),
     });
 
     firstPage.drawText(`${finalCertNo}`, {

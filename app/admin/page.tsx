@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
+import PdfPreviewCanvas from './PdfPreviewCanvas';
 
 const ImportModal = dynamic(() => import('./ImportParticipantsModal'), { ssr: false });
 
@@ -204,24 +205,23 @@ export default function AdminPage() {
 
 function CreateEventTab({ onCreated }: { onCreated: () => void }) {
   const [loading, setLoading] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);         // ← BARU: simpan File object
   const [activeMode, setActiveMode] = useState<'none' | 'name' | 'cert'>('none');
   const [namePos, setNamePos] = useState({ x: 50, y: 50 });
   const [certPos, setCertPos] = useState({ x: 10, y: 90 });
   const [certPrefix, setCertPrefix] = useState('CERT/EVENT/2026');
+  const [previewName, setPreviewName] = useState('');               // ← BARU
   const [error, setError] = useState('');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) { if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(URL.createObjectURL(file)); }
+    if (file) setPdfFile(file);                                       // ← simpan File, bukan ObjectURL
   };
 
-  const handlePreviewClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (activeMode === 'none') return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    if (activeMode === 'name') setNamePos({ x, y }); else setCertPos({ x, y });
+  // ← BARU: handler klik canvas
+  const handleCanvasClick = (x: number, y: number) => {
+    if (activeMode === 'name') setNamePos({ x, y });
+    else if (activeMode === 'cert') setCertPos({ x, y });
     setActiveMode('none');
   };
 
@@ -239,12 +239,25 @@ function CreateEventTab({ onCreated }: { onCreated: () => void }) {
       const res = await fetch('/api/events', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
-        form.reset(); setPreviewUrl(null); setCertPrefix('CERT/EVENT/2026');
-        setNamePos({ x: 50, y: 50 }); setCertPos({ x: 10, y: 90 }); onCreated();
-      } else { setError(data.error || 'Gagal publish event.'); }
-    } catch { setError('Koneksi bermasalah.'); }
-    finally { setLoading(false); }
+        form.reset();
+        setPdfFile(null);
+        setCertPrefix('CERT/EVENT/2026');
+        setNamePos({ x: 50, y: 50 });
+        setCertPos({ x: 10, y: 90 });
+        setPreviewName('');
+        onCreated();
+      } else {
+        setError(data.error || 'Gagal publish event.');
+      }
+    } catch {
+      setError('Koneksi bermasalah.');
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // Preview cert no dari prefix yang sedang diketik
+  const previewCertNo = `001/${certPrefix}`;
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
@@ -256,7 +269,13 @@ function CreateEventTab({ onCreated }: { onCreated: () => void }) {
             <input type="text" name="eventName" required placeholder="e.g. Workshop React 2026" className="input-field" />
           </Field>
           <Field label="Cert Number Format">
-            <input type="text" name="certPrefix" value={certPrefix} onChange={e => setCertPrefix(e.target.value.toUpperCase())} required placeholder="e.g. SKILL/UX/2026" className="input-field font-mono" />
+            <input
+              type="text" name="certPrefix"
+              value={certPrefix}
+              onChange={e => setCertPrefix(e.target.value.toUpperCase())}
+              required placeholder="e.g. SKILL/UX/2026"
+              className="input-field font-mono"
+            />
             <div className="mt-2 p-2.5 bg-slate-900 rounded-xl">
               <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Preview:</p>
               <p className="text-xs font-mono text-emerald-400 font-bold">001/{certPrefix}</p>
@@ -266,42 +285,64 @@ function CreateEventTab({ onCreated }: { onCreated: () => void }) {
             <input type="datetime-local" name="expiryDate" className="input-field" />
           </Field>
           <Field label="Template PDF">
-            <input type="file" name="file" accept="application/pdf" onChange={handleFileChange} required className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer" />
+            <input
+              type="file" name="file" accept="application/pdf"
+              onChange={handleFileChange} required
+              className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer"
+            />
           </Field>
+
+          {/* ← BARU: Input preview nama */}
+          <Field label="Preview Nama (untuk cek posisi)">
+            <input
+              type="text"
+              value={previewName}
+              onChange={e => setPreviewName(e.target.value)}
+              placeholder="Ketik nama untuk preview..."
+              className="input-field"
+            />
+          </Field>
+
           <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={() => setActiveMode('name')} className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'name' ? 'bg-blue-600 text-white border-blue-600 animate-pulse' : 'bg-white text-blue-600 border-blue-100'}`}>
-              {activeMode === 'name' ? 'Click PDF ↓' : 'Set Name Pos'}
+            <button
+              type="button" onClick={() => setActiveMode('name')}
+              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'name' ? 'bg-blue-600 text-white border-blue-600 animate-pulse' : 'bg-white text-blue-600 border-blue-100'}`}
+            >
+              {activeMode === 'name' ? 'Klik PDF →' : 'Set Posisi Nama'}
             </button>
-            <button type="button" onClick={() => setActiveMode('cert')} className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'cert' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : 'bg-white text-emerald-600 border-emerald-100'}`}>
-              {activeMode === 'cert' ? 'Click PDF ↓' : 'Set No. Pos'}
+            <button
+              type="button" onClick={() => setActiveMode('cert')}
+              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'cert' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : 'bg-white text-emerald-600 border-emerald-100'}`}
+            >
+              {activeMode === 'cert' ? 'Klik PDF →' : 'Set Posisi No.'}
             </button>
           </div>
+
           <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400">
             <span className="bg-slate-50 p-2 rounded-xl">Name: {namePos.x.toFixed(1)}%, {namePos.y.toFixed(1)}%</span>
             <span className="bg-slate-50 p-2 rounded-xl">No: {certPos.x.toFixed(1)}%, {certPos.y.toFixed(1)}%</span>
           </div>
-          <button type="submit" disabled={loading || !previewUrl} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all">
+
+          <button
+            type="submit" disabled={loading || !pdfFile}
+            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all"
+          >
             {loading ? 'Publishing...' : 'Publish Event'}
           </button>
         </form>
       </div>
-      <div className="lg:col-span-2 bg-slate-50 rounded-[2rem] border border-slate-100 flex items-center justify-center min-h-[500px] overflow-hidden relative">
-        {previewUrl ? (
-          <>
-            <iframe src={`${previewUrl}#toolbar=0&navpanes=0`} className="absolute inset-0 w-full h-full pointer-events-none" />
-            <div className={`absolute inset-0 z-10 ${activeMode !== 'none' ? 'cursor-crosshair bg-slate-900/10' : ''}`} onClick={handlePreviewClick}>
-              <PosMarker label="Name" pos={namePos} color="blue" active={activeMode === 'name'} />
-              <PosMarker label="No." pos={certPos} color="emerald" active={activeMode === 'cert'} />
-            </div>
-          </>
-        ) : (
-          <div className="text-center opacity-30">
-            <svg className="w-16 h-16 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-            <p className="text-sm font-black uppercase tracking-[0.3em]">No Template Loaded</p>
-          </div>
-        )}
+
+      {/* ← BARU: Ganti iframe dengan PdfPreviewCanvas */}
+      <div className="lg:col-span-2 bg-slate-50 rounded-[2rem] border border-slate-100 flex items-center justify-center min-h-[500px] overflow-hidden relative p-4">
+        <PdfPreviewCanvas
+          pdfSource={pdfFile}
+          previewName={previewName}
+          previewCertNo={previewCertNo}
+          namePos={namePos}
+          certPos={certPos}
+          activeMode={activeMode}
+          onCanvasClick={handleCanvasClick}
+        />
       </div>
     </div>
   );
@@ -477,24 +518,24 @@ function EditEventForm({ event, onUpdated, showToast }: {
   showToast: (msg: string, type?: 'success' | 'error') => void;
 }) {
   const [loading, setLoading] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [pdfFile, setPdfFile] = useState<File | null>(null);        // ← BARU
   const [activeMode, setActiveMode] = useState<'none' | 'name' | 'cert'>('none');
   const [namePos, setNamePos] = useState({ x: event.nameX, y: event.nameY });
   const [certPos, setCertPos] = useState({ x: event.certX, y: event.certY });
+  const [previewName, setPreviewName] = useState('');               // ← BARU
+  const [certPrefix, setCertPrefix] = useState(event.certPrefix);  // ← BARU: track prefix
 
   const formatForInput = (d: string | null) => d ? new Date(d).toISOString().slice(0, 16) : '';
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) { if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(URL.createObjectURL(file)); }
+    if (file) setPdfFile(file);
   };
 
-  const handlePreviewClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (activeMode === 'none') return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-    if (activeMode === 'name') setNamePos({ x, y }); else setCertPos({ x, y });
+  // ← BARU: handler klik canvas
+  const handleCanvasClick = (x: number, y: number) => {
+    if (activeMode === 'name') setNamePos({ x, y });
+    else if (activeMode === 'cert') setCertPos({ x, y });
     setActiveMode('none');
   };
 
@@ -509,9 +550,14 @@ function EditEventForm({ event, onUpdated, showToast }: {
     formData.append('certY', certPos.y.toString());
     const res = await fetch(`/api/events/${event.id}`, { method: 'PATCH', body: formData });
     const data = await res.json();
-    if (res.ok) onUpdated(); else showToast(data.error || 'Gagal update.', 'error');
+    if (res.ok) onUpdated();
+    else showToast(data.error || 'Gagal update.', 'error');
     setLoading(false);
   };
+
+  // Sumber PDF: file baru (jika di-upload) atau URL existing dari Supabase
+  const pdfSource = pdfFile ?? event.templateUrl;
+  const previewCertNo = `001/${certPrefix}`;
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
@@ -521,37 +567,75 @@ function EditEventForm({ event, onUpdated, showToast }: {
             <input type="text" name="eventName" defaultValue={event.eventName} required className="input-field" />
           </Field>
           <Field label="Cert Number Format">
-            <input type="text" name="certPrefix" defaultValue={event.certPrefix} required className="input-field font-mono" />
+            <input
+              type="text" name="certPrefix"
+              defaultValue={event.certPrefix}
+              onChange={e => setCertPrefix(e.target.value.toUpperCase())}
+              required className="input-field font-mono"
+            />
           </Field>
           <Field label="Event Deadline">
             <input type="datetime-local" name="expiryDate" defaultValue={formatForInput(event.expiryDate)} className="input-field" />
           </Field>
           <Field label="Upload Template PDF Baru (opsional)">
-            <input type="file" name="file" accept="application/pdf" onChange={handleFileChange} className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer" />
+            <input
+              type="file" name="file" accept="application/pdf"
+              onChange={handleFileChange}
+              className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer"
+            />
           </Field>
+
+          {/* ← BARU: Input preview nama */}
+          <Field label="Preview Nama (untuk cek posisi)">
+            <input
+              type="text"
+              value={previewName}
+              onChange={e => setPreviewName(e.target.value)}
+              placeholder="Ketik nama untuk preview..."
+              className="input-field"
+            />
+          </Field>
+
           <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={() => setActiveMode('name')} className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'name' ? 'bg-blue-600 text-white border-blue-600 animate-pulse' : 'bg-white text-blue-600 border-blue-100'}`}>
-              {activeMode === 'name' ? 'Click PDF ↓' : 'Set Name Pos'}
+            <button
+              type="button" onClick={() => setActiveMode('name')}
+              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'name' ? 'bg-blue-600 text-white border-blue-600 animate-pulse' : 'bg-white text-blue-600 border-blue-100'}`}
+            >
+              {activeMode === 'name' ? 'Klik PDF →' : 'Set Posisi Nama'}
             </button>
-            <button type="button" onClick={() => setActiveMode('cert')} className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'cert' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : 'bg-white text-emerald-600 border-emerald-100'}`}>
-              {activeMode === 'cert' ? 'Click PDF ↓' : 'Set No. Pos'}
+            <button
+              type="button" onClick={() => setActiveMode('cert')}
+              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'cert' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : 'bg-white text-emerald-600 border-emerald-100'}`}
+            >
+              {activeMode === 'cert' ? 'Klik PDF →' : 'Set Posisi No.'}
             </button>
           </div>
+
           <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400">
             <span className="bg-slate-50 p-2 rounded-xl">Name: {namePos.x.toFixed(1)}%, {namePos.y.toFixed(1)}%</span>
             <span className="bg-slate-50 p-2 rounded-xl">No: {certPos.x.toFixed(1)}%, {certPos.y.toFixed(1)}%</span>
           </div>
-          <button type="submit" disabled={loading} className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 transition-all">
+
+          <button
+            type="submit" disabled={loading}
+            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 transition-all"
+          >
             {loading ? 'Saving...' : 'Save Changes'}
           </button>
         </form>
       </div>
-      <div className="lg:col-span-2 bg-slate-50 rounded-[2rem] border border-slate-100 overflow-hidden min-h-[400px] relative">
-        <iframe src={`${previewUrl || event.templateUrl}#toolbar=0&navpanes=0`} className="absolute inset-0 w-full h-full pointer-events-none" />
-        <div className={`absolute inset-0 z-10 ${activeMode !== 'none' ? 'cursor-crosshair bg-slate-900/10' : ''}`} onClick={handlePreviewClick}>
-          <PosMarker label="Name" pos={namePos} color="blue" active={activeMode === 'name'} />
-          <PosMarker label="No." pos={certPos} color="emerald" active={activeMode === 'cert'} />
-        </div>
+
+      {/* ← BARU: Ganti iframe dengan PdfPreviewCanvas */}
+      <div className="lg:col-span-2 bg-slate-50 rounded-[2rem] border border-slate-100 overflow-hidden min-h-[400px] relative p-4">
+        <PdfPreviewCanvas
+          pdfSource={pdfSource}
+          previewName={previewName}
+          previewCertNo={previewCertNo}
+          namePos={namePos}
+          certPos={certPos}
+          activeMode={activeMode}
+          onCanvasClick={handleCanvasClick}
+        />
       </div>
     </div>
   );
