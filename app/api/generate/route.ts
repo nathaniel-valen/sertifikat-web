@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     });
 
     const userExists = whitelistForEvent.find(
-      (w) => w.name.toLowerCase().trim() === name.trim().toLowerCase()
+      (w: { name: string }) => w.name.toLowerCase().trim() === name.trim().toLowerCase()
     );
 
     if (!userExists) {

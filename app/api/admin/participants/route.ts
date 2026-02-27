@@ -23,15 +23,19 @@ export async function GET() {
 // 2. POST: Tambah nama
 export async function POST(req: Request) {
   try {
-    const { name } = await req.json();
+    const { name, eventId } = await req.json(); // ← tambah eventId
+    
     if (!name) return NextResponse.json({ error: "Nama kosong" }, { status: 400 });
+    if (!eventId) return NextResponse.json({ error: "Event ID kosong" }, { status: 400 });
 
     const newUser = await prisma.whitelist.create({ 
-      data: { name: name.trim() } 
+      data: { 
+        name: name.trim(),
+        eventId: Number(eventId)
+      } 
     });
     return NextResponse.json(newUser);
   } catch (e: any) {
-    // Cek P2002 (Unique constraint failed)
     if (e.code === 'P2002') {
       return NextResponse.json({ error: "Nama sudah terdaftar" }, { status: 400 });
     }

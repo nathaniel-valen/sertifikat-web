@@ -2,12 +2,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> }; // ✅ tambah Promise
 
-// POST: Tambah participant ke event tertentu
 export async function POST(req: Request, { params }: Params) {
   try {
-    const { id } = await params; // ✅ WAJIB
+    const { id } = await params;
     const eventId = Number(id);
 
     if (isNaN(eventId)) {
@@ -36,10 +35,9 @@ export async function POST(req: Request, { params }: Params) {
   }
 }
 
-// DELETE: Hapus participant dari whitelist event
 export async function DELETE(req: Request, { params }: Params) {
   try {
-    const { id: eventIdStr } = await params;
+    const { id: eventIdStr } = await params; // ✅ sudah benar
     const { id } = await req.json();
 
     if (!id || isNaN(Number(id))) {
