@@ -24,3 +24,14 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.input-style {
+  @apply w-full bg-slate-50 border-2 border-slate-50 p-4 rounded-2xl 
+         focus:bg-white focus:border-slate-900 outline-none transition-all 
+         font-bold text-sm;
+}
+
+.input-field {
+  @apply w-full bg-slate-50 border-2 border-slate-50 p-4 rounded-2xl 
+         focus:bg-white focus:border-slate-900 outline-none transition-all font-bold text-sm;
+}

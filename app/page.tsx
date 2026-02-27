@@ -2,9 +2,11 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// ✅ FIX #4: Type lengkap dengan expiryDate
 type EventData = {
   id: number;
   eventName: string;
+  expiryDate?: string | null;
 };
 
 export default function Home() {
@@ -13,7 +15,6 @@ export default function Home() {
   const [selectedEventId, setSelectedEventId] = useState('');
   const [loading, setLoading] = useState(false);
   
-  // State untuk Custom Alert
   const [alertConfig, setAlertConfig] = useState<{
     show: boolean;
     type: 'success' | 'error';
@@ -59,6 +60,7 @@ export default function Home() {
         document.body.appendChild(a);
         a.click();
         a.remove();
+        window.URL.revokeObjectURL(url); // ✅ Cleanup blob URL
         
         showAlert('success', 'Berhasil!', 'Sertifikat kamu sedang diunduh. Selamat ya!');
       } else {
@@ -122,43 +124,34 @@ export default function Home() {
           <h1 className="text-3xl font-[900] text-slate-900 tracking-tighter">CertiFlow</h1>
           <p className="text-slate-400 mt-2 text-sm font-semibold tracking-wide uppercase italic">Digital Credential Platform</p>
         </div>
-        
 
         <div className="p-10 pt-2">
           <form onSubmit={handleGenerate} className="space-y-6">
 
-            <select 
-              value={selectedEventId} 
-              onChange={(e) => setSelectedEventId(e.target.value)}
-              className="..." 
-              required
-            >
-              <option value="" disabled>-- Choose Your Event --</option>
-              {events.map((ev: any) => {
-                const isExpired = ev.expiryDate && new Date() > new Date(ev.expiryDate);
-                return (
-                  <option key={ev.id} value={ev.id} disabled={isExpired} className={isExpired ? 'text-slate-300' : ''}>
-                    {ev.eventName} {isExpired ? '(EXPIRED / CLOSED)' : ''}
-                  </option>
-                );
-              })}
-            </select>
-            
-            {/* Input Event */}
+            {/* ✅ FIX #2: Hanya 1 select, dengan logic expiry yang benar */}
             <div className="space-y-2">
               <label className="block text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Select Program</label>
               <div className="relative group">
                 <select 
                   value={selectedEventId} 
                   onChange={(e) => setSelectedEventId(e.target.value)}
-                  className="w-full bg-slate-50 border-2 border-slate-50 text-slate-900 text-sm rounded-2xl focus:bg-white focus:border-slate-900 block p-4.5 appearance-none cursor-pointer outline-none transition-all font-bold shadow-sm"
+                  className="w-full bg-slate-50 border-2 border-slate-50 text-slate-900 text-sm rounded-2xl focus:bg-white focus:border-slate-900 block p-4 appearance-none cursor-pointer outline-none transition-all font-bold shadow-sm"
                   required
                 >
                   <option value="" disabled>-- Choose Your Event --</option>
                   {events.length > 0 ? (
-                    events.map((ev) => (
-                      <option key={ev.id} value={ev.id}>{ev.eventName}</option>
-                    ))
+                    events.map((ev) => {
+                      const isExpired = ev.expiryDate && new Date() > new Date(ev.expiryDate);
+                      return (
+                        <option 
+                          key={ev.id} 
+                          value={ev.id} 
+                          disabled={!!isExpired}
+                        >
+                          {ev.eventName}{isExpired ? ' (EXPIRED / CLOSED)' : ''}
+                        </option>
+                      );
+                    })
                   ) : (
                     <option disabled>Fetching events...</option>
                   )}
@@ -177,7 +170,7 @@ export default function Home() {
                 placeholder="Enter your registered name..." 
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full bg-slate-50 border-2 border-slate-50 text-slate-900 text-sm rounded-2xl focus:bg-white focus:border-slate-900 block p-4.5 outline-none transition-all placeholder:text-slate-300 font-bold shadow-sm"
+                className="w-full bg-slate-50 border-2 border-slate-50 text-slate-900 text-sm rounded-2xl focus:bg-white focus:border-slate-900 block p-4 outline-none transition-all placeholder:text-slate-300 font-bold shadow-sm"
                 required
               />
             </div>

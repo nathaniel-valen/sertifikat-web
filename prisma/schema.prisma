@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
 model Event {
@@ -20,12 +20,17 @@ model Event {
   certY        Float
   createdAt    DateTime      @default(now())
   certificates Certificate[]
+  whitelists   Whitelist[]
 }
 
 model Whitelist {
-  id   Int    @id @default(autoincrement())
-  name String @unique
+  id        Int      @id @default(autoincrement())
+  name      String
+  eventId   Int
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
+
+  @@unique([name, eventId])
 }
 
 model Certificate {
