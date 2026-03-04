@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
+export const dynamic = 'force-dynamic';
 
 // Pisah komponen yang pakai useSearchParams ke dalam komponen sendiri
 function LoginForm() {
