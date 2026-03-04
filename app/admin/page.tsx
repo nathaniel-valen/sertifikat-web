@@ -2,30 +2,61 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
-import PdfPreviewCanvas from './PdfPreviewCanvas';
+import { signOut } from 'next-auth/react';
+import PdfPreviewCanvas from './components/PdfPreviewCanvas';
 
-const ImportModal = dynamic(() => import('./ImportParticipantsModal'), { ssr: false });
+const ImportModal = dynamic(() => import('./components/ImportParticipantsModal'), { ssr: false });
 
+// ─── Color Presets ────────────────────────────────────────────────────────────
+const COLOR_PRESETS = [
+  { label: 'Hitam',      hex: '#000000' },
+  { label: 'Putih',      hex: '#FFFFFF' },
+  { label: 'Emas',       hex: '#C9A84C' },
+  { label: 'Perak',      hex: '#A8A9AD' },
+  { label: 'Merah',      hex: '#C0392B' },
+  { label: 'Navy',       hex: '#1A237E' },
+  { label: 'Abu Gelap',  hex: '#424242' },
+  { label: 'Abu Terang', hex: '#9E9E9E' },
+];
+
+function ColorPicker({ label, value, onChange }: {
+  label: string; value: string; onChange: (hex: string) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2 ml-1">{label}</label>
+      <div className="flex flex-wrap gap-2">
+        {COLOR_PRESETS.map(c => (
+          <button key={c.hex} type="button" title={c.label} onClick={() => onChange(c.hex)}
+            className={`w-8 h-8 rounded-xl border-2 transition-all hover:scale-110 ${value === c.hex ? 'border-slate-900 scale-110 shadow-lg' : 'border-transparent'}`}
+            style={{ backgroundColor: c.hex, boxShadow: c.hex === '#FFFFFF' ? 'inset 0 0 0 1px #e2e8f0' : undefined }}
+          />
+        ))}
+        <div className="flex items-center gap-1.5 bg-slate-50 rounded-xl px-2">
+          <div className="w-4 h-4 rounded-md border border-slate-200 flex-shrink-0" style={{ backgroundColor: value }} />
+          <input type="text" value={value} onChange={e => onChange(e.target.value)}
+            placeholder="#000000" maxLength={7}
+            className="w-20 bg-transparent text-[10px] font-mono font-bold text-slate-600 outline-none" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 type WhitelistEntry = { id: number; name: string; createdAt: string };
 type Certificate = { id: number; name: string; certNo: string | null; date: string };
 type EventSummary = {
-  id: number;
-  eventName: string;
-  certPrefix: string;
-  isActive: boolean;
-  expiryDate: string | null;
-  templateUrl: string;
-  nameX: number; nameY: number;
-  certX: number; certY: number;
-  createdAt: string;
-  _count: { whitelists: number; certificates: number };
+  id: number; eventName: string; slug: string;
+  certPrefix: string; certFormat: string; certStartNumber: number; certPadding: number;
+  nameColor: string; certColor: string; isActive: boolean; expiryDate: string | null;
+  templateUrl: string; nameX: number; nameY: number; certX: number; certY: number;
+  createdAt: string; _count: { whitelists: number; certificates: number };
 };
-type EventDetail = EventSummary & {
-  whitelists: WhitelistEntry[];
-  certificates: Certificate[];
-};
+type EventDetail = EventSummary & { whitelists: WhitelistEntry[]; certificates: Certificate[] };
 type TabView = 'create' | number;
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function useToast() {
   const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({
     show: false, message: '', type: 'success',
@@ -55,30 +86,43 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function PosMarker({ label, pos, color, active }: {
-  label: string;
-  pos: { x: number; y: number };
-  color: 'blue' | 'emerald';
-  active: boolean;
-}) {
-  return (
-    <motion.div
-      animate={{ scale: active ? 1.15 : 1 }}
-      className={`absolute ${color === 'blue' ? 'bg-blue-600' : 'bg-emerald-600'} text-white px-3 py-1.5 text-[9px] font-black rounded-full shadow-xl transform -translate-x-1/2 -translate-y-1/2 uppercase tracking-tighter flex items-center gap-1.5 pointer-events-none`}
-      style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
-    >
-      <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
-      {label}
-    </motion.div>
-  );
+function buildCertPreview(format: string, prefix: string, startNum: number, padding: number): string {
+  const numStr = String(startNum).padStart(padding, '0');
+  const year = new Date().getFullYear().toString();
+  return format.replace('{nomor}', numStr).replace('{prefix}', prefix).replace('{tahun}', year);
 }
 
+// ─── Export CSV helper ────────────────────────────────────────────────────────
+function exportClaimsToCSV(eventName: string, certificates: Certificate[]) {
+  const header = ['No', 'Nama', 'No. Sertifikat', 'Tanggal Klaim'];
+  const rows = certificates.map((c, i) => [
+    i + 1,
+    c.name,
+    c.certNo || '-',
+    new Date(c.date).toLocaleString('id-ID'),
+  ]);
+  const csvContent = [header, ...rows]
+    .map(row => row.map(cell => `"${cell}"`).join(','))
+    .join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Claims_${eventName.replace(/\s+/g, '_')}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ─── Main Admin Page ──────────────────────────────────────────────────────────
 export default function AdminPage() {
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [activeTab, setActiveTab] = useState<TabView>('create');
   const [selectedEvent, setSelectedEvent] = useState<EventDetail | null>(null);
   const [detailStatus, setDetailStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
   const [loadingEvents, setLoadingEvents] = useState(true);
+  const [loggingOut, setLoggingOut] = useState(false);
   const { toast, show: showToast } = useToast();
 
   const fetchEvents = useCallback(async () => {
@@ -108,60 +152,68 @@ export default function AdminPage() {
       if (data.event && Array.isArray(data.event.whitelists) && Array.isArray(data.event.certificates)) {
         setSelectedEvent(data.event);
         setDetailStatus('ready');
-      } else {
-        throw new Error('Data tidak lengkap');
-      }
+      } else throw new Error('Data tidak lengkap');
     } catch {
       setDetailStatus('idle');
       showToast('Gagal memuat detail event.', 'error');
     }
   };
 
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    await signOut({ callbackUrl: '/admin/login' });
+  };
+
   return (
     <main className="min-h-screen bg-[#f8f9fb] p-4 md:p-6 font-sans text-slate-900">
       <AnimatePresence>
         {toast.show && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-            className={`fixed top-6 right-6 z-[200] px-6 py-4 rounded-2xl shadow-2xl font-black text-sm text-white ${toast.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`}
-          >
+          <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
+            className={`fixed top-6 right-6 z-[200] px-6 py-4 rounded-2xl shadow-2xl font-black text-sm text-white ${toast.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'}`}>
             {toast.message}
           </motion.div>
         )}
       </AnimatePresence>
 
       <div className="max-w-7xl mx-auto space-y-6">
+        {/* ─── Header dengan Logout ──────────────────────────────────────── */}
         <div className="flex items-center justify-between bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100">
           <div>
             <h1 className="text-2xl font-black tracking-tighter">CertiFlow Admin</h1>
             <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Management Console</p>
           </div>
-          <div className="w-11 h-11 bg-slate-900 rounded-2xl flex items-center justify-center text-white">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            </svg>
-          </div>
+          <button
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-600 rounded-2xl font-black text-[10px] uppercase tracking-wider transition-all disabled:opacity-50"
+          >
+            {loggingOut ? (
+              <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5"
+                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            )}
+            {loggingOut ? 'Logging out...' : 'Logout'}
+          </button>
         </div>
 
         <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
           <div className="flex overflow-x-auto border-b border-slate-100 px-4 pt-4 gap-2">
-            <button
-              onClick={() => { setActiveTab('create'); setDetailStatus('idle'); }}
-              className={`flex-shrink-0 px-5 py-3 rounded-t-2xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'create' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'}`}
-            >
+            <button onClick={() => { setActiveTab('create'); setDetailStatus('idle'); }}
+              className={`flex-shrink-0 px-5 py-3 rounded-t-2xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === 'create' ? 'bg-slate-900 text-white' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'}`}>
               + New Event
             </button>
-
             {loadingEvents && [1, 2].map(i => (
               <div key={i} className="flex-shrink-0 w-32 h-10 rounded-t-2xl bg-slate-100 animate-pulse" />
             ))}
-
             {!loadingEvents && events.map(ev => (
-              <button
-                key={ev.id}
-                onClick={() => openEventTab(ev.id)}
-                className={`flex-shrink-0 flex items-center gap-2 px-5 py-3 rounded-t-2xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === ev.id ? 'bg-slate-900 text-white' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'}`}
-              >
+              <button key={ev.id} onClick={() => openEventTab(ev.id)}
+                className={`flex-shrink-0 flex items-center gap-2 px-5 py-3 rounded-t-2xl text-xs font-black uppercase tracking-wider transition-all ${activeTab === ev.id ? 'bg-slate-900 text-white' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'}`}>
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${ev.isActive ? 'bg-emerald-400' : 'bg-slate-300'}`} />
                 <span className="max-w-[120px] truncate">{ev.eventName}</span>
                 <span className={`text-[9px] px-2 py-0.5 rounded-full font-black ${activeTab === ev.id ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
@@ -169,7 +221,6 @@ export default function AdminPage() {
                 </span>
               </button>
             ))}
-
             {!loadingEvents && events.length === 0 && (
               <div className="flex items-center px-4 pb-3 text-[10px] font-black uppercase tracking-widest text-slate-300">
                 Belum ada event — buat yang pertama!
@@ -203,22 +254,22 @@ export default function AdminPage() {
   );
 }
 
+// ─── Create Event Tab ─────────────────────────────────────────────────────────
 function CreateEventTab({ onCreated }: { onCreated: () => void }) {
   const [loading, setLoading] = useState(false);
-  const [pdfFile, setPdfFile] = useState<File | null>(null);         // ← BARU: simpan File object
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [activeMode, setActiveMode] = useState<'none' | 'name' | 'cert'>('none');
   const [namePos, setNamePos] = useState({ x: 50, y: 50 });
   const [certPos, setCertPos] = useState({ x: 10, y: 90 });
-  const [certPrefix, setCertPrefix] = useState('CERT/EVENT/2026');
-  const [previewName, setPreviewName] = useState('');               // ← BARU
+  const [certPrefix, setCertPrefix] = useState('CERT/EVENT');
+  const [certFormat, setCertFormat] = useState('{nomor}/{prefix}/{tahun}');
+  const [certStartNumber, setCertStartNumber] = useState(1);
+  const [certPadding, setCertPadding] = useState(3);
+  const [nameColor, setNameColor] = useState('#000000');
+  const [certColor, setCertColor] = useState('#000000');
+  const [previewName, setPreviewName] = useState('');
   const [error, setError] = useState('');
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) setPdfFile(file);                                       // ← simpan File, bukan ObjectURL
-  };
-
-  // ← BARU: handler klik canvas
   const handleCanvasClick = (x: number, y: number) => {
     if (activeMode === 'name') setNamePos({ x, y });
     else if (activeMode === 'cert') setCertPos({ x, y });
@@ -235,132 +286,124 @@ function CreateEventTab({ onCreated }: { onCreated: () => void }) {
     formData.append('nameY', namePos.y.toString());
     formData.append('certX', certPos.x.toString());
     formData.append('certY', certPos.y.toString());
+    formData.append('nameColor', nameColor);
+    formData.append('certColor', certColor);
+    formData.append('certFormat', certFormat);
+    formData.append('certStartNumber', certStartNumber.toString());
+    formData.append('certPadding', certPadding.toString());
     try {
       const res = await fetch('/api/events', { method: 'POST', body: formData });
       const data = await res.json();
       if (res.ok) {
         form.reset();
-        setPdfFile(null);
-        setCertPrefix('CERT/EVENT/2026');
-        setNamePos({ x: 50, y: 50 });
-        setCertPos({ x: 10, y: 90 });
-        setPreviewName('');
+        setPdfFile(null); setCertPrefix('CERT/EVENT'); setCertFormat('{nomor}/{prefix}/{tahun}');
+        setCertStartNumber(1); setCertPadding(3); setNameColor('#000000'); setCertColor('#000000');
+        setNamePos({ x: 50, y: 50 }); setCertPos({ x: 10, y: 90 }); setPreviewName('');
         onCreated();
-      } else {
-        setError(data.error || 'Gagal publish event.');
-      }
-    } catch {
-      setError('Koneksi bermasalah.');
-    } finally {
-      setLoading(false);
-    }
+      } else setError(data.error || 'Gagal publish event.');
+    } catch { setError('Koneksi bermasalah.'); }
+    finally { setLoading(false); }
   };
 
-  // Preview cert no dari prefix yang sedang diketik
-  const previewCertNo = `001/${certPrefix}`;
+  const certPreview = buildCertPreview(certFormat, certPrefix, certStartNumber, certPadding);
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-1">
+      <div className="lg:col-span-1 space-y-1">
         <h2 className="text-lg font-black mb-5">Setup Event Baru</h2>
         {error && <p className="mb-4 text-xs font-bold text-rose-500 bg-rose-50 p-3 rounded-xl">{error}</p>}
         <form onSubmit={handleSubmit} className="space-y-4">
           <Field label="Event Name">
             <input type="text" name="eventName" required placeholder="e.g. Workshop React 2026" className="input-field" />
           </Field>
-          <Field label="Cert Number Format">
-            <input
-              type="text" name="certPrefix"
-              value={certPrefix}
+          <Field label="Cert Prefix">
+            <input type="text" name="certPrefix" value={certPrefix}
               onChange={e => setCertPrefix(e.target.value.toUpperCase())}
-              required placeholder="e.g. SKILL/UX/2026"
-              className="input-field font-mono"
-            />
-            <div className="mt-2 p-2.5 bg-slate-900 rounded-xl">
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Preview:</p>
-              <p className="text-xs font-mono text-emerald-400 font-bold">001/{certPrefix}</p>
-            </div>
+              required placeholder="e.g. SKILL/UX" className="input-field font-mono" />
           </Field>
+          <Field label="Format Nomor Sertifikat">
+            <input type="text" value={certFormat} onChange={e => setCertFormat(e.target.value)}
+              placeholder="{nomor}/{prefix}/{tahun}" className="input-field font-mono text-sm" />
+            <p className="text-[9px] text-slate-400 font-bold mt-1 ml-1">
+              Variabel: <code className="bg-slate-100 px-1 rounded">{'{nomor}'}</code>{' '}
+              <code className="bg-slate-100 px-1 rounded">{'{prefix}'}</code>{' '}
+              <code className="bg-slate-100 px-1 rounded">{'{tahun}'}</code>
+            </p>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Nomor Awal">
+              <input type="number" min={1} value={certStartNumber}
+                onChange={e => setCertStartNumber(Number(e.target.value))} className="input-field font-mono" />
+            </Field>
+            <Field label="Padding Digit">
+              <select value={certPadding} onChange={e => setCertPadding(Number(e.target.value))} className="input-field">
+                <option value={2}>2 digit (01)</option>
+                <option value={3}>3 digit (001)</option>
+                <option value={4}>4 digit (0001)</option>
+                <option value={5}>5 digit (00001)</option>
+              </select>
+            </Field>
+          </div>
+          <div className="p-3 bg-slate-900 rounded-xl">
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Preview Nomor:</p>
+            <p className="text-sm font-mono text-emerald-400 font-bold mt-0.5">{certPreview}</p>
+          </div>
+          <div className="p-4 bg-slate-50 rounded-2xl space-y-4">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Warna Font</p>
+            <ColorPicker label="Warna Nama" value={nameColor} onChange={setNameColor} />
+            <ColorPicker label="Warna No. Sertifikat" value={certColor} onChange={setCertColor} />
+          </div>
           <Field label="Event Deadline (Optional)">
             <input type="datetime-local" name="expiryDate" className="input-field" />
           </Field>
           <Field label="Template PDF">
-            <input
-              type="file" name="file" accept="application/pdf"
-              onChange={handleFileChange} required
-              className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer"
-            />
+            <input type="file" name="file" accept="application/pdf"
+              onChange={e => { const f = e.target.files?.[0]; if (f) setPdfFile(f); }} required
+              className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer" />
           </Field>
-
-          {/* ← BARU: Input preview nama */}
           <Field label="Preview Nama (untuk cek posisi)">
-            <input
-              type="text"
-              value={previewName}
-              onChange={e => setPreviewName(e.target.value)}
-              placeholder="Ketik nama untuk preview..."
-              className="input-field"
-            />
+            <input type="text" value={previewName} onChange={e => setPreviewName(e.target.value)}
+              placeholder="Ketik nama untuk preview..." className="input-field" />
           </Field>
-
           <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button" onClick={() => setActiveMode('name')}
-              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'name' ? 'bg-blue-600 text-white border-blue-600 animate-pulse' : 'bg-white text-blue-600 border-blue-100'}`}
-            >
+            <button type="button" onClick={() => setActiveMode('name')}
+              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'name' ? 'bg-blue-600 text-white border-blue-600 animate-pulse' : 'bg-white text-blue-600 border-blue-100'}`}>
               {activeMode === 'name' ? 'Klik PDF →' : 'Set Posisi Nama'}
             </button>
-            <button
-              type="button" onClick={() => setActiveMode('cert')}
-              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'cert' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : 'bg-white text-emerald-600 border-emerald-100'}`}
-            >
+            <button type="button" onClick={() => setActiveMode('cert')}
+              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'cert' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : 'bg-white text-emerald-600 border-emerald-100'}`}>
               {activeMode === 'cert' ? 'Klik PDF →' : 'Set Posisi No.'}
             </button>
           </div>
-
           <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400">
             <span className="bg-slate-50 p-2 rounded-xl">Name: {namePos.x.toFixed(1)}%, {namePos.y.toFixed(1)}%</span>
             <span className="bg-slate-50 p-2 rounded-xl">No: {certPos.x.toFixed(1)}%, {certPos.y.toFixed(1)}%</span>
           </div>
-
-          <button
-            type="submit" disabled={loading || !pdfFile}
-            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all"
-          >
+          <button type="submit" disabled={loading || !pdfFile}
+            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all">
             {loading ? 'Publishing...' : 'Publish Event'}
           </button>
         </form>
       </div>
-
-      {/* ← BARU: Ganti iframe dengan PdfPreviewCanvas */}
       <div className="lg:col-span-2 bg-slate-50 rounded-[2rem] border border-slate-100 flex items-center justify-center min-h-[500px] overflow-hidden relative p-4">
-        <PdfPreviewCanvas
-          pdfSource={pdfFile}
-          previewName={previewName}
-          previewCertNo={previewCertNo}
-          namePos={namePos}
-          certPos={certPos}
-          activeMode={activeMode}
-          onCanvasClick={handleCanvasClick}
-        />
+        <PdfPreviewCanvas pdfSource={pdfFile} previewName={previewName} previewCertNo={certPreview}
+          namePos={namePos} certPos={certPos} nameColor={nameColor} certColor={certColor}
+          activeMode={activeMode} onCanvasClick={handleCanvasClick} />
       </div>
     </div>
   );
 }
 
+// ─── Event Detail Tab ─────────────────────────────────────────────────────────
 function EventDetailTab({ event, onRefresh, onDeleted, onUpdated, showToast }: {
-  event: EventDetail;
-  onRefresh: () => void;
-  onDeleted: () => void;
-  onUpdated: () => void;
-  showToast: (msg: string, type?: 'success' | 'error') => void;
+  event: EventDetail; onRefresh: () => void; onDeleted: () => void;
+  onUpdated: () => void; showToast: (msg: string, type?: 'success' | 'error') => void;
 }) {
   const [section, setSection] = useState<'participants' | 'edit' | 'claims'>('participants');
   const [newName, setNewName] = useState('');
   const [addingName, setAddingName] = useState(false);
   const [showImport, setShowImport] = useState(false);
 
-  // ✅ Guard
   if (!event || !Array.isArray(event.whitelists) || !Array.isArray(event.certificates)) {
     return <div className="flex justify-center py-32"><Spinner /></div>;
   }
@@ -377,7 +420,7 @@ function EventDetailTab({ event, onRefresh, onDeleted, onUpdated, showToast }: {
   };
 
   const deleteEvent = async () => {
-    if (!confirm(`Hapus event "${event.eventName}"? Semua data participant & sertifikat akan ikut terhapus!`)) return;
+    if (!confirm(`Hapus event "${event.eventName}"? Semua data akan ikut terhapus!`)) return;
     const res = await fetch(`/api/events/${event.id}`, { method: 'DELETE' });
     if (res.ok) onDeleted(); else showToast('Gagal hapus event.', 'error');
   };
@@ -405,6 +448,16 @@ function EventDetailTab({ event, onRefresh, onDeleted, onUpdated, showToast }: {
     else showToast('Gagal hapus peserta.', 'error');
   };
 
+  // ─── Hapus claim individual ────────────────────────────────────────────────
+  const deleteClaim = async (id: number, name: string) => {
+    if (!confirm(`Hapus klaim sertifikat "${name}"? Peserta bisa klaim ulang setelah ini.`)) return;
+    const res = await fetch(`/api/events/${event.id}/claims/${id}`, { method: 'DELETE' });
+    if (res.ok) { onRefresh(); showToast(`Klaim "${name}" dihapus.`); }
+    else showToast('Gagal hapus klaim.', 'error');
+  };
+
+  const participantLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/e/${event.slug}`;
+
   return (
     <>
       <AnimatePresence>
@@ -415,6 +468,7 @@ function EventDetailTab({ event, onRefresh, onDeleted, onUpdated, showToast }: {
       </AnimatePresence>
 
       <div className="space-y-5">
+        {/* ─── Event Header ──────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-start justify-between gap-4 p-5 bg-slate-50 rounded-2xl">
           <div>
             <div className="flex items-center gap-3 mb-1 flex-wrap">
@@ -429,33 +483,53 @@ function EventDetailTab({ event, onRefresh, onDeleted, onUpdated, showToast }: {
               <span>{event._count.certificates} Claimed</span>
               {event.expiryDate && <span>Deadline: {new Date(event.expiryDate).toLocaleString('id-ID')}</span>}
             </div>
+            {/* Link peserta */}
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Link Peserta:</span>
+              <code className="text-[10px] font-mono bg-slate-900 text-emerald-400 px-2 py-1 rounded-lg">{participantLink}</code>
+              <button onClick={() => { navigator.clipboard.writeText(participantLink); showToast('Link disalin!'); }}
+                className="text-[10px] font-black text-slate-400 hover:text-slate-700 underline underline-offset-2">
+                Copy
+              </button>
+            </div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <button onClick={toggleActive} className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all ${event.isActive ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'}`}>
+            <button onClick={toggleActive}
+              className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all ${event.isActive ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'}`}>
               {event.isActive ? 'Deactivate' : 'Activate'}
             </button>
-            <button onClick={deleteEvent} className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider bg-rose-100 text-rose-700 hover:bg-rose-200 transition-all">
+            <button onClick={deleteEvent}
+              className="px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider bg-rose-100 text-rose-700 hover:bg-rose-200 transition-all">
               Delete Event
             </button>
           </div>
         </div>
 
+        {/* ─── Section Tabs ──────────────────────────────────────────────── */}
         <div className="flex gap-2 flex-wrap">
           {(['participants', 'edit', 'claims'] as const).map(s => (
-            <button key={s} onClick={() => setSection(s)} className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all ${section === s ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>
+            <button key={s} onClick={() => setSection(s)}
+              className={`px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all ${section === s ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}>
               {s === 'participants' ? `Participants (${event.whitelists.length})` : s === 'claims' ? `Claims (${event.certificates.length})` : 'Edit Event'}
             </button>
           ))}
         </div>
 
+        {/* ─── Participants ──────────────────────────────────────────────── */}
         {section === 'participants' && (
           <div className="space-y-4">
             <div className="flex gap-3">
-              <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addParticipant()}
-                placeholder="Ketik nama participant..." className="flex-1 bg-slate-50 border-2 border-slate-50 p-4 rounded-2xl outline-none focus:bg-white focus:border-amber-400 text-sm font-bold transition-all" />
-              <button onClick={addParticipant} disabled={addingName || !newName.trim()} className="bg-amber-500 text-white px-5 rounded-2xl font-black hover:bg-amber-600 transition-all disabled:opacity-40 text-lg">+</button>
-              <button onClick={() => setShowImport(true)} className="flex items-center gap-2 bg-slate-900 text-white px-5 rounded-2xl font-black hover:bg-black transition-all text-[10px] uppercase tracking-wider">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+              <input value={newName} onChange={e => setNewName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addParticipant()}
+                placeholder="Ketik nama participant..."
+                className="flex-1 bg-slate-50 border-2 border-slate-50 p-4 rounded-2xl outline-none focus:bg-white focus:border-amber-400 text-sm font-bold transition-all" />
+              <button onClick={addParticipant} disabled={addingName || !newName.trim()}
+                className="bg-amber-500 text-white px-5 rounded-2xl font-black hover:bg-amber-600 transition-all disabled:opacity-40 text-lg">+</button>
+              <button onClick={() => setShowImport(true)}
+                className="flex items-center gap-2 bg-slate-900 text-white px-5 rounded-2xl font-black hover:bg-black transition-all text-[10px] uppercase tracking-wider">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
                 Import
               </button>
             </div>
@@ -465,10 +539,15 @@ function EventDetailTab({ event, onRefresh, onDeleted, onUpdated, showToast }: {
                   className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border-2 border-transparent hover:border-slate-200 transition-all group">
                   <div>
                     <p className="text-sm font-bold text-slate-800">{w.name}</p>
-                    <p className="text-[10px] text-slate-400 font-bold">{new Date(w.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                    <p className="text-[10px] text-slate-400 font-bold">
+                      {new Date(w.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </p>
                   </div>
-                  <button onClick={() => deleteParticipant(w.id, w.name)} className="text-slate-200 group-hover:text-slate-400 hover:!text-rose-500 transition-colors p-1">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  <button onClick={() => deleteParticipant(w.id, w.name)}
+                    className="text-slate-200 group-hover:text-slate-400 hover:!text-rose-500 transition-colors p-1">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
                   </button>
                 </motion.div>
               )) : (
@@ -483,28 +562,61 @@ function EventDetailTab({ event, onRefresh, onDeleted, onUpdated, showToast }: {
 
         {section === 'edit' && <EditEventForm event={event} onUpdated={onUpdated} showToast={showToast} />}
 
+        {/* ─── Claims ────────────────────────────────────────────────────── */}
         {section === 'claims' && (
-          <div className="overflow-hidden border border-slate-100 rounded-2xl">
-            <table className="w-full text-left">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Participant</th>
-                  <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Certificate No</th>
-                  <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {event.certificates.length > 0 ? event.certificates.map(c => (
-                  <tr key={c.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="p-4 text-sm font-bold text-slate-800">{c.name}</td>
-                    <td className="p-4"><span className="bg-slate-900 text-emerald-400 px-3 py-1.5 rounded-xl text-[10px] font-mono font-black">{c.certNo || '-'}</span></td>
-                    <td className="p-4 text-xs text-slate-400 font-bold">{new Date(c.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+          <div className="space-y-4">
+            {/* Export button */}
+            {event.certificates.length > 0 && (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => exportClaimsToCSV(event.eventName, event.certificates)}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Export CSV ({event.certificates.length})
+                </button>
+              </div>
+            )}
+            <div className="overflow-hidden border border-slate-100 rounded-2xl">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Participant</th>
+                    <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Certificate No</th>
+                    <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
+                    <th className="p-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Action</th>
                   </tr>
-                )) : (
-                  <tr><td colSpan={3} className="p-16 text-center text-slate-300 text-[10px] font-black uppercase tracking-widest">No Claims Yet</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {event.certificates.length > 0 ? event.certificates.map(c => (
+                    <tr key={c.id} className="hover:bg-slate-50 transition-colors group">
+                      <td className="p-4 text-sm font-bold text-slate-800">{c.name}</td>
+                      <td className="p-4">
+                        <span className="bg-slate-900 text-emerald-400 px-3 py-1.5 rounded-xl text-[10px] font-mono font-black">
+                          {c.certNo || '-'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-xs text-slate-400 font-bold">
+                        {new Date(c.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td className="p-4">
+                        <button onClick={() => deleteClaim(c.id, c.name)}
+                          className="text-slate-200 group-hover:text-slate-400 hover:!text-rose-500 transition-colors p-1"
+                          title="Hapus klaim ini">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr><td colSpan={4} className="p-16 text-center text-slate-300 text-[10px] font-black uppercase tracking-widest">No Claims Yet</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
@@ -512,27 +624,26 @@ function EventDetailTab({ event, onRefresh, onDeleted, onUpdated, showToast }: {
   );
 }
 
+// ─── Edit Event Form ──────────────────────────────────────────────────────────
 function EditEventForm({ event, onUpdated, showToast }: {
-  event: EventDetail;
-  onUpdated: () => void;
+  event: EventDetail; onUpdated: () => void;
   showToast: (msg: string, type?: 'success' | 'error') => void;
 }) {
   const [loading, setLoading] = useState(false);
-  const [pdfFile, setPdfFile] = useState<File | null>(null);        // ← BARU
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [activeMode, setActiveMode] = useState<'none' | 'name' | 'cert'>('none');
   const [namePos, setNamePos] = useState({ x: event.nameX, y: event.nameY });
   const [certPos, setCertPos] = useState({ x: event.certX, y: event.certY });
-  const [previewName, setPreviewName] = useState('');               // ← BARU
-  const [certPrefix, setCertPrefix] = useState(event.certPrefix);  // ← BARU: track prefix
+  const [certPrefix, setCertPrefix] = useState(event.certPrefix);
+  const [certFormat, setCertFormat] = useState(event.certFormat || '{nomor}/{prefix}/{tahun}');
+  const [certStartNumber, setCertStartNumber] = useState(event.certStartNumber ?? 1);
+  const [certPadding, setCertPadding] = useState(event.certPadding ?? 3);
+  const [nameColor, setNameColor] = useState(event.nameColor || '#000000');
+  const [certColor, setCertColor] = useState(event.certColor || '#000000');
+  const [previewName, setPreviewName] = useState('');
 
   const formatForInput = (d: string | null) => d ? new Date(d).toISOString().slice(0, 16) : '';
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) setPdfFile(file);
-  };
-
-  // ← BARU: handler klik canvas
   const handleCanvasClick = (x: number, y: number) => {
     if (activeMode === 'name') setNamePos({ x, y });
     else if (activeMode === 'cert') setCertPos({ x, y });
@@ -548,6 +659,11 @@ function EditEventForm({ event, onUpdated, showToast }: {
     formData.append('nameY', namePos.y.toString());
     formData.append('certX', certPos.x.toString());
     formData.append('certY', certPos.y.toString());
+    formData.append('nameColor', nameColor);
+    formData.append('certColor', certColor);
+    formData.append('certFormat', certFormat);
+    formData.append('certStartNumber', certStartNumber.toString());
+    formData.append('certPadding', certPadding.toString());
     const res = await fetch(`/api/events/${event.id}`, { method: 'PATCH', body: formData });
     const data = await res.json();
     if (res.ok) onUpdated();
@@ -555,9 +671,8 @@ function EditEventForm({ event, onUpdated, showToast }: {
     setLoading(false);
   };
 
-  // Sumber PDF: file baru (jika di-upload) atau URL existing dari Supabase
   const pdfSource = pdfFile ?? event.templateUrl;
-  const previewCertNo = `001/${certPrefix}`;
+  const certPreview = buildCertPreview(certFormat, certPrefix, certStartNumber, certPadding);
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
@@ -566,76 +681,77 @@ function EditEventForm({ event, onUpdated, showToast }: {
           <Field label="Event Name">
             <input type="text" name="eventName" defaultValue={event.eventName} required className="input-field" />
           </Field>
-          <Field label="Cert Number Format">
-            <input
-              type="text" name="certPrefix"
-              defaultValue={event.certPrefix}
-              onChange={e => setCertPrefix(e.target.value.toUpperCase())}
-              required className="input-field font-mono"
-            />
+          <Field label="Cert Prefix">
+            <input type="text" name="certPrefix" defaultValue={event.certPrefix}
+              onChange={e => setCertPrefix(e.target.value.toUpperCase())} required className="input-field font-mono" />
           </Field>
+          <Field label="Format Nomor Sertifikat">
+            <input type="text" value={certFormat} onChange={e => setCertFormat(e.target.value)} className="input-field font-mono text-sm" />
+            <p className="text-[9px] text-slate-400 font-bold mt-1 ml-1">
+              Variabel: <code className="bg-slate-100 px-1 rounded">{'{nomor}'}</code>{' '}
+              <code className="bg-slate-100 px-1 rounded">{'{prefix}'}</code>{' '}
+              <code className="bg-slate-100 px-1 rounded">{'{tahun}'}</code>
+            </p>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Nomor Awal">
+              <input type="number" min={1} value={certStartNumber}
+                onChange={e => setCertStartNumber(Number(e.target.value))} className="input-field font-mono" />
+            </Field>
+            <Field label="Padding Digit">
+              <select value={certPadding} onChange={e => setCertPadding(Number(e.target.value))} className="input-field">
+                <option value={2}>2 digit (01)</option>
+                <option value={3}>3 digit (001)</option>
+                <option value={4}>4 digit (0001)</option>
+                <option value={5}>5 digit (00001)</option>
+              </select>
+            </Field>
+          </div>
+          <div className="p-3 bg-slate-900 rounded-xl">
+            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Preview Nomor:</p>
+            <p className="text-sm font-mono text-emerald-400 font-bold mt-0.5">{certPreview}</p>
+          </div>
+          <div className="p-4 bg-slate-50 rounded-2xl space-y-4">
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Warna Font</p>
+            <ColorPicker label="Warna Nama" value={nameColor} onChange={setNameColor} />
+            <ColorPicker label="Warna No. Sertifikat" value={certColor} onChange={setCertColor} />
+          </div>
           <Field label="Event Deadline">
             <input type="datetime-local" name="expiryDate" defaultValue={formatForInput(event.expiryDate)} className="input-field" />
           </Field>
           <Field label="Upload Template PDF Baru (opsional)">
-            <input
-              type="file" name="file" accept="application/pdf"
-              onChange={handleFileChange}
-              className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer"
-            />
+            <input type="file" name="file" accept="application/pdf"
+              onChange={e => { const f = e.target.files?.[0]; if (f) setPdfFile(f); }}
+              className="w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-slate-900 file:text-white hover:file:bg-slate-800 cursor-pointer" />
           </Field>
-
-          {/* ← BARU: Input preview nama */}
           <Field label="Preview Nama (untuk cek posisi)">
-            <input
-              type="text"
-              value={previewName}
-              onChange={e => setPreviewName(e.target.value)}
-              placeholder="Ketik nama untuk preview..."
-              className="input-field"
-            />
+            <input type="text" value={previewName} onChange={e => setPreviewName(e.target.value)}
+              placeholder="Ketik nama untuk preview..." className="input-field" />
           </Field>
-
           <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button" onClick={() => setActiveMode('name')}
-              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'name' ? 'bg-blue-600 text-white border-blue-600 animate-pulse' : 'bg-white text-blue-600 border-blue-100'}`}
-            >
+            <button type="button" onClick={() => setActiveMode('name')}
+              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'name' ? 'bg-blue-600 text-white border-blue-600 animate-pulse' : 'bg-white text-blue-600 border-blue-100'}`}>
               {activeMode === 'name' ? 'Klik PDF →' : 'Set Posisi Nama'}
             </button>
-            <button
-              type="button" onClick={() => setActiveMode('cert')}
-              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'cert' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : 'bg-white text-emerald-600 border-emerald-100'}`}
-            >
+            <button type="button" onClick={() => setActiveMode('cert')}
+              className={`p-3 rounded-2xl font-black text-[10px] uppercase tracking-wider border-2 transition-all ${activeMode === 'cert' ? 'bg-emerald-600 text-white border-emerald-600 animate-pulse' : 'bg-white text-emerald-600 border-emerald-100'}`}>
               {activeMode === 'cert' ? 'Klik PDF →' : 'Set Posisi No.'}
             </button>
           </div>
-
           <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400">
             <span className="bg-slate-50 p-2 rounded-xl">Name: {namePos.x.toFixed(1)}%, {namePos.y.toFixed(1)}%</span>
             <span className="bg-slate-50 p-2 rounded-xl">No: {certPos.x.toFixed(1)}%, {certPos.y.toFixed(1)}%</span>
           </div>
-
-          <button
-            type="submit" disabled={loading}
-            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 transition-all"
-          >
+          <button type="submit" disabled={loading}
+            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-black disabled:bg-slate-200 disabled:text-slate-400 transition-all">
             {loading ? 'Saving...' : 'Save Changes'}
           </button>
         </form>
       </div>
-
-      {/* ← BARU: Ganti iframe dengan PdfPreviewCanvas */}
       <div className="lg:col-span-2 bg-slate-50 rounded-[2rem] border border-slate-100 overflow-hidden min-h-[400px] relative p-4">
-        <PdfPreviewCanvas
-          pdfSource={pdfSource}
-          previewName={previewName}
-          previewCertNo={previewCertNo}
-          namePos={namePos}
-          certPos={certPos}
-          activeMode={activeMode}
-          onCanvasClick={handleCanvasClick}
-        />
+        <PdfPreviewCanvas pdfSource={pdfSource} previewName={previewName} previewCertNo={certPreview}
+          namePos={namePos} certPos={certPos} nameColor={nameColor} certColor={certColor}
+          activeMode={activeMode} onCanvasClick={handleCanvasClick} />
       </div>
     </div>
   );

@@ -2,13 +2,25 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
+// Helper: konversi hex "#RRGGBB" → rgb(r,g,b) dalam skala 0-1
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const clean = hex.replace('#', '');
+  const bigint = parseInt(clean, 16);
+  return {
+    r: ((bigint >> 16) & 255) / 255,
+    g: ((bigint >> 8) & 255) / 255,
+    b: (bigint & 255) / 255,
+  };
+}
+
 type Props = {
-  // Sumber PDF: bisa File (upload baru) atau URL (dari Supabase)
   pdfSource: File | string | null;
   previewName: string;
   previewCertNo: string;
   namePos: { x: number; y: number };
   certPos: { x: number; y: number };
+  nameColor: string;   // ← BARU: hex string, e.g. "#000000"
+  certColor: string;   // ← BARU: hex string
   activeMode: 'none' | 'name' | 'cert';
   onCanvasClick: (x: number, y: number) => void;
 };
@@ -19,6 +31,8 @@ export default function PdfPreviewCanvas({
   previewCertNo,
   namePos,
   certPos,
+  nameColor,
+  certColor,
   activeMode,
   onCanvasClick,
 }: Props) {
@@ -35,7 +49,6 @@ export default function PdfPreviewCanvas({
     setError('');
 
     try {
-      // 1. Load PDF bytes
       let pdfBytes: ArrayBuffer;
       if (pdfSource instanceof File) {
         pdfBytes = await pdfSource.arrayBuffer();
@@ -45,7 +58,6 @@ export default function PdfPreviewCanvas({
         pdfBytes = await res.arrayBuffer();
       }
 
-      // 2. Modifikasi PDF dengan pdf-lib (tambah teks preview)
       const pdfDoc = await PDFDocument.load(pdfBytes);
       const firstPage = pdfDoc.getPages()[0];
       const { width, height } = firstPage.getSize();
@@ -55,24 +67,26 @@ export default function PdfPreviewCanvas({
       const certFontSize = 14;
 
       const displayName = previewName.trim() || 'Nama Peserta';
-      const displayCertNo = previewCertNo.trim() || '001/CERT/EVENT';
+      const displayCertNo = previewCertNo.trim() || '001/CERT/2026';
 
-      // Konversi % → koordinat PDF
       const pdfNameX = (namePos.x / 100) * width;
       const pdfNameY = height - (namePos.y / 100) * height;
       const pdfCertX = (certPos.x / 100) * width;
       const pdfCertY = height - (certPos.y / 100) * height;
 
-      // Center teks secara horizontal
       const nameTextWidth = font.widthOfTextAtSize(displayName, nameFontSize);
       const certTextWidth = font.widthOfTextAtSize(displayCertNo, certFontSize);
+
+      // Konversi warna hex → rgb pdf-lib
+      const nameRgb = hexToRgb(nameColor || '#000000');
+      const certRgb = hexToRgb(certColor || '#000000');
 
       firstPage.drawText(displayName, {
         x: pdfNameX - nameTextWidth / 2,
         y: pdfNameY,
         size: nameFontSize,
         font,
-        color: rgb(0, 0, 0),
+        color: rgb(nameRgb.r, nameRgb.g, nameRgb.b),
       });
 
       firstPage.drawText(displayCertNo, {
@@ -80,15 +94,13 @@ export default function PdfPreviewCanvas({
         y: pdfCertY,
         size: certFontSize,
         font,
-        color: rgb(0.2, 0.2, 0.2),
+        color: rgb(certRgb.r, certRgb.g, certRgb.b),
       });
 
-      // 3. Render ke canvas pakai PDF.js (via CDN)
       const modifiedBytes = await pdfDoc.save();
       const blob = new Blob([modifiedBytes as BlobPart], { type: 'application/pdf' });
       const blobUrl = URL.createObjectURL(blob);
 
-      // Load PDF.js dari CDN kalau belum ada
       const pdfjsLib = await loadPdfJs();
       const loadingTask = pdfjsLib.getDocument(blobUrl);
       const pdf = await loadingTask.promise;
@@ -110,24 +122,18 @@ export default function PdfPreviewCanvas({
       if (!ctx) return;
 
       await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise;
-
       URL.revokeObjectURL(blobUrl);
     } catch (e: any) {
       setError(e.message || 'Gagal render preview');
     } finally {
       setRendering(false);
     }
-  }, [pdfSource, previewName, previewCertNo, namePos, certPos]);
+  }, [pdfSource, previewName, previewCertNo, namePos, certPos, nameColor, certColor]);
 
-  // Debounce render supaya tidak terlalu sering saat user mengetik
   useEffect(() => {
     if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current);
-    renderTimeoutRef.current = setTimeout(() => {
-      renderPdf();
-    }, 300);
-    return () => {
-      if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current);
-    };
+    renderTimeoutRef.current = setTimeout(() => { renderPdf(); }, 300);
+    return () => { if (renderTimeoutRef.current) clearTimeout(renderTimeoutRef.current); };
   }, [renderPdf]);
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -152,14 +158,12 @@ export default function PdfPreviewCanvas({
 
   return (
     <div ref={containerRef} className="relative w-full h-full">
-      {/* Canvas PDF */}
       <div
         className={`relative w-full ${activeMode !== 'none' ? 'cursor-crosshair' : 'cursor-default'}`}
         onClick={handleCanvasClick}
       >
         <canvas ref={canvasRef} className="w-full h-auto block rounded-2xl" />
 
-        {/* Loading overlay */}
         {rendering && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/70 rounded-2xl backdrop-blur-sm">
             <div className="flex flex-col items-center gap-2">
@@ -172,7 +176,6 @@ export default function PdfPreviewCanvas({
           </div>
         )}
 
-        {/* Crosshair mode overlay */}
         {activeMode !== 'none' && !rendering && (
           <div className="absolute inset-0 rounded-2xl bg-slate-900/10 flex items-center justify-center pointer-events-none">
             <div className={`px-4 py-2 rounded-full font-black text-xs uppercase tracking-widest text-white shadow-xl ${activeMode === 'name' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
@@ -189,21 +192,16 @@ export default function PdfPreviewCanvas({
   );
 }
 
-// Load PDF.js dari CDN sekali saja
 let pdfJsPromise: Promise<any> | null = null;
 function loadPdfJs(): Promise<any> {
   if (pdfJsPromise) return pdfJsPromise;
   pdfJsPromise = new Promise((resolve, reject) => {
-    if ((window as any).pdfjsLib) {
-      resolve((window as any).pdfjsLib);
-      return;
-    }
+    if ((window as any).pdfjsLib) { resolve((window as any).pdfjsLib); return; }
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
     script.onload = () => {
       const lib = (window as any).pdfjsLib;
-      lib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      lib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
       resolve(lib);
     };
     script.onerror = reject;

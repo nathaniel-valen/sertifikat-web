@@ -1,7 +1,9 @@
-// app/api/generate/route.ts
+// app/api/e/[slug]/generate/route.ts
 import { NextResponse } from 'next/server';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { prisma } from '@/lib/prisma';
+
+type Params = { params: Promise<{ slug: string }> };
 
 function hexToRgb(hex: string) {
   const clean = (hex || '#000000').replace('#', '');
@@ -13,20 +15,19 @@ function hexToRgb(hex: string) {
   };
 }
 
-export async function POST(req: Request) {
+export async function POST(req: Request, { params }: Params) {
   let newRecordId: number | null = null;
 
   try {
-    const { name, eventId } = await req.json();
+    const { slug } = await params;
+    const { name } = await req.json();
 
-    if (!name || !eventId) {
-      return NextResponse.json({ error: 'Nama dan Event harus diisi!' }, { status: 400 });
+    if (!name?.trim()) {
+      return NextResponse.json({ error: 'Nama harus diisi!' }, { status: 400 });
     }
 
-    const parsedEventId = parseInt(eventId);
-
-    // 1. Ambil event
-    const event = await prisma.event.findUnique({ where: { id: parsedEventId } });
+    // 1. Ambil event dari slug
+    const event = await prisma.event.findUnique({ where: { slug } });
     if (!event) return NextResponse.json({ error: 'Event tidak ditemukan.' }, { status: 404 });
     if (!event.isActive) return NextResponse.json({ error: 'Event ini sudah tidak aktif.' }, { status: 403 });
 
@@ -38,7 +39,7 @@ export async function POST(req: Request) {
     }
 
     // 3. Validasi whitelist
-    const whitelist = await prisma.whitelist.findMany({ where: { eventId: parsedEventId } });
+    const whitelist = await prisma.whitelist.findMany({ where: { eventId: event.id } });
     const userExists = whitelist.find(
       (w: { name: string }) => w.name.toLowerCase().trim() === name.trim().toLowerCase()
     );
@@ -142,7 +143,7 @@ export async function POST(req: Request) {
     });
 
   } catch (error) {
-    console.error('ERROR GENERATE:', error);
+    console.error('ERROR GENERATE (slug):', error);
     if (newRecordId) {
       try { await prisma.certificate.delete({ where: { id: newRecordId } }); } catch {}
     }
