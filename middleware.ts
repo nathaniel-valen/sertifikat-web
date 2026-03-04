@@ -1,29 +1,32 @@
-// middleware.ts  ← letakkan di ROOT project (sejajar dengan /app)
-import { auth } from '@/lib/auth';
+// middleware.ts
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
-export default auth((req) => {
-  const { nextUrl, auth: session } = req;
-  const isLoggedIn = !!session?.user;
-  const isAdminRoute = nextUrl.pathname.startsWith('/admin');
-  const isLoginPage = nextUrl.pathname === '/admin/login';
+export function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
+  const isLoginPage = pathname === '/admin/login';
+  const isAdminRoute = pathname.startsWith('/admin');
 
-  // Kalau belum login dan mau akses /admin/* (kecuali login page) → redirect ke login
+  // Cek session token NextAuth (JWT)
+  const token =
+    req.cookies.get('next-auth.session-token')?.value ||
+    req.cookies.get('__Secure-next-auth.session-token')?.value;
+
+  const isLoggedIn = !!token;
+
   if (isAdminRoute && !isLoginPage && !isLoggedIn) {
-    const loginUrl = new URL('/admin/login', nextUrl.origin);
-    loginUrl.searchParams.set('callbackUrl', nextUrl.pathname);
+    const loginUrl = new URL('/admin/login', req.url);
+    loginUrl.searchParams.set('callbackUrl', pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  // Kalau sudah login dan mau ke halaman login → redirect ke dashboard
   if (isLoginPage && isLoggedIn) {
-    return NextResponse.redirect(new URL('/admin', nextUrl.origin));
+    return NextResponse.redirect(new URL('/admin', req.url));
   }
 
   return NextResponse.next();
-});
+}
 
 export const config = {
-  // Jalankan middleware hanya di route /admin/*
   matcher: ['/admin/:path*'],
 };
