@@ -1,11 +1,12 @@
 'use client';
-// app/admin/login/page.tsx
+import { Suspense } from 'react';
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 
-export default function AdminLoginPage() {
+// Pisah komponen yang pakai useSearchParams ke dalam komponen sendiri
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/admin';
@@ -37,7 +38,6 @@ export default function AdminLoginPage() {
 
   return (
     <main className="min-h-screen bg-[#fcfdfe] flex items-center justify-center p-4">
-      {/* Background Decor */}
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] right-[-5%] w-[40%] h-[40%] bg-blue-50/50 rounded-full blur-[120px]" />
         <div className="absolute bottom-[-10%] left-[-5%] w-[40%] h-[40%] bg-slate-100 rounded-full blur-[120px]" />
@@ -48,7 +48,6 @@ export default function AdminLoginPage() {
         animate={{ opacity: 1, y: 0 }}
         className="relative z-10 w-full max-w-md bg-white rounded-[2.5rem] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.08)] border border-slate-100 overflow-hidden"
       >
-        {/* Header */}
         <div className="pt-14 pb-8 px-8 text-center">
           <div className="inline-flex items-center justify-center w-20 h-20 bg-slate-900 rounded-[2rem] mb-8 shadow-2xl shadow-slate-900/20 transform -rotate-3">
             <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -62,7 +61,6 @@ export default function AdminLoginPage() {
 
         <div className="p-10 pt-2">
           <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Error */}
             {error && (
               <motion.div
                 initial={{ opacity: 0, y: -8 }}
@@ -76,43 +74,27 @@ export default function AdminLoginPage() {
               </motion.div>
             )}
 
-            {/* Email */}
             <div className="space-y-2">
               <label className="block text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Email</label>
-              <input
-                type="email"
-                placeholder="admin@example.com"
-                value={email}
+              <input type="email" placeholder="admin@example.com" value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full bg-slate-50 border-2 border-slate-50 text-slate-900 text-sm rounded-2xl focus:bg-white focus:border-slate-900 block p-4 outline-none transition-all placeholder:text-slate-300 font-bold shadow-sm"
-                required
-              />
+                required />
             </div>
 
-            {/* Password */}
             <div className="space-y-2">
               <label className="block text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Password</label>
-              <input
-                type="password"
-                placeholder="••••••••"
-                value={password}
+              <input type="password" placeholder="••••••••" value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-slate-50 border-2 border-slate-50 text-slate-900 text-sm rounded-2xl focus:bg-white focus:border-slate-900 block p-4 outline-none transition-all placeholder:text-slate-300 font-bold shadow-sm"
-                required
-              />
+                required />
             </div>
 
-            {/* Submit */}
             <div className="pt-4">
-              <button
-                type="submit"
-                disabled={loading}
+              <button type="submit" disabled={loading}
                 className={`w-full flex items-center justify-center gap-4 py-5 px-8 rounded-2xl font-[900] text-xs uppercase tracking-[0.25em] text-white transition-all active:scale-[0.96] shadow-2xl ${
-                  loading
-                    ? 'bg-slate-200 cursor-not-allowed text-slate-400 shadow-none'
-                    : 'bg-slate-900 hover:bg-black shadow-slate-200'
-                }`}
-              >
+                  loading ? 'bg-slate-200 cursor-not-allowed text-slate-400 shadow-none' : 'bg-slate-900 hover:bg-black shadow-slate-200'
+                }`}>
                 {loading ? (
                   <svg className="animate-spin h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -138,5 +120,14 @@ export default function AdminLoginPage() {
         </div>
       </motion.div>
     </main>
+  );
+}
+
+// ← Wrap dengan Suspense di default export
+export default function AdminLoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }
